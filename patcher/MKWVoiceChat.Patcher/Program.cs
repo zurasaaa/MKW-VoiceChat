@@ -37,7 +37,8 @@ internal static class Program
             try
             {
                 PatcherSelfTests.RunBootstrapDiscovery();
-                ConsoleUi.WriteLine("Bootstrap discovery self-test OK.");
+                PatcherSelfTests.RunRetroRewindArchiveCompatibility();
+                ConsoleUi.WriteLine("Bootstrap discovery and Retro Rewind archive self-tests OK.");
                 return 0;
             }
             catch (Exception ex)

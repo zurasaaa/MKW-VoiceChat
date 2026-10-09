@@ -185,7 +185,8 @@ internal static class RetroRewindUpdater
                     http,
                     update.Url,
                     stageParent,
-                    cancellationToken);
+                    cancellationToken,
+                    update.Version);
                 File.WriteAllText(
                     Path.Combine(stageParent, "RetroRewind6", "version.txt"),
                     update.Version.ToString());
@@ -202,14 +203,41 @@ internal static class RetroRewindUpdater
         }
     }
 
-    private static void ApplyDeletions(
+    // The Retro Rewind deletion feed can list stale downloaded update ZIPs at the
+    // distribution root. Our transactional updater never stores these archives
+    // there, so they must be ignored, not resolved as install-tree paths.
+    private static bool IsVersionedRootArchive(string path)
+    {
+        if (path.Contains('/') || path.Contains('\\') ||
+            !path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var name = path[..^4];
+        return UpstreamCatalog.TryVersion(name, out var version) &&
+            version.Build >= 0 && version.Revision < 0 &&
+            string.Equals(name, version.ToString(3), StringComparison.Ordinal);
+    }
+
+    internal static void ApplyDeletions(
         string stageParent,
         IEnumerable<RetroDeletion> deletions)
     {
         foreach (var deletion in deletions.OrderBy(item => item.Version))
         {
             var relative = deletion.Path.TrimStart('/', '\\');
-            var target = ResolveAllowedPath(stageParent, relative);
+            if (IsVersionedRootArchive(relative))
+                continue;
+
+            string target;
+            try
+            {
+                target = ResolveAllowedPath(stageParent, relative);
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new InvalidDataException(
+                    $"Retro Rewind deletion feed contains an unsafe path: {deletion.Path}", ex);
+            }
 
             if (File.Exists(target))
                 File.Delete(target);
@@ -222,7 +250,8 @@ internal static class RetroRewindUpdater
         HttpClient http,
         string url,
         string stageParent,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Version? updateVersion = null)
     {
         var temp = Path.Combine(
             Path.GetTempPath(),
@@ -232,42 +261,79 @@ internal static class RetroRewindUpdater
         {
             await DownloadFileAsync(http, url, temp, cancellationToken);
             using var archive = ZipFile.OpenRead(temp);
-            var entries = archive.Entries.ToList();
-            for (var index = 0; index < entries.Count; index++)
-            {
-                var entry = entries[index];
-                var normalized = entry.FullName.Replace('\\', '/').TrimStart('/');
-                if (string.IsNullOrWhiteSpace(normalized) ||
-                    normalized.EndsWith("desktop.ini", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var destination = ResolveAllowedPath(stageParent, normalized);
-                if (normalized.EndsWith('/'))
-                {
-                    Directory.CreateDirectory(destination);
-                    continue;
-                }
-
-                var directory = Path.GetDirectoryName(destination);
-                if (!string.IsNullOrWhiteSpace(directory))
-                    Directory.CreateDirectory(directory);
-
-                entry.ExtractToFile(destination, overwrite: true);
-
-                if (entries.Count > 0)
-                {
-                    ConsoleUi.ProgressMeasured(
-                        index + 1,
-                        entries.Count,
-                        "Extracting Retro Rewind update");
-                }
-            }
+            ExtractArchiveEntries(archive, stageParent, updateVersion);
         }
         finally
         {
             TryDeleteFile(temp);
+        }
+    }
+
+    internal static void ExtractArchiveEntries(ZipArchive archive, string stageParent, Version? updateVersion)
+    {
+        var entries = archive.Entries.ToList();
+        var packageName = updateVersion is null ? null : updateVersion + ".zip";
+        var packageEntry = packageName is null ? null : entries.FirstOrDefault(entry =>
+            string.Equals(entry.FullName.Replace('\\', '/'), packageName, StringComparison.OrdinalIgnoreCase));
+
+        var hasDeployableFiles = entries.Any(entry =>
+        {
+            var path = entry.FullName.Replace('\\', '/');
+            return entry.Name.Length > 0 &&
+                (path.StartsWith("RetroRewind6/", StringComparison.OrdinalIgnoreCase) ||
+                 path.StartsWith("riivolution/", StringComparison.OrdinalIgnoreCase));
+        });
+
+        if (packageEntry is not null && !hasDeployableFiles)
+        {
+            if (entries.Any(entry => entry != packageEntry &&
+                !entry.FullName.EndsWith("desktop.ini", StringComparison.OrdinalIgnoreCase) &&
+                !IsVersionedRootArchive(entry.FullName.Replace('\\', '/').TrimStart('/'))))
+            {
+                throw new InvalidDataException("Retro Rewind archive contains unsupported root entries.");
+            }
+
+            using var packageStream = packageEntry.Open();
+            using var packageBuffer = new MemoryStream();
+            packageStream.CopyTo(packageBuffer);
+            packageBuffer.Position = 0;
+            using var nestedArchive = new ZipArchive(packageBuffer, ZipArchiveMode.Read);
+            ExtractArchiveEntries(nestedArchive, stageParent, null);
+            return;
+        }
+
+        if (!hasDeployableFiles)
+            throw new InvalidDataException("Retro Rewind archive contains no installable files.");
+
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            var normalized = entry.FullName.Replace('\\', '/').TrimStart('/');
+            if (string.IsNullOrWhiteSpace(normalized) ||
+                normalized.EndsWith("desktop.ini", StringComparison.OrdinalIgnoreCase) ||
+                IsVersionedRootArchive(normalized) ||
+                (entry == packageEntry && hasDeployableFiles))
+            {
+                continue;
+            }
+
+            var destination = ResolveAllowedPath(stageParent, normalized);
+            if (normalized.EndsWith('/'))
+            {
+                Directory.CreateDirectory(destination);
+                continue;
+            }
+
+            var directory = Path.GetDirectoryName(destination);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            entry.ExtractToFile(destination, overwrite: true);
+
+            ConsoleUi.ProgressMeasured(
+                index + 1,
+                entries.Count,
+                "Extracting Retro Rewind update");
         }
     }
 

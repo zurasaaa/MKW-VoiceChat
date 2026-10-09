@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main
+    paths:
+      - "version.json"
 
 permissions:
   contents: write
@@ -27,9 +31,13 @@ jobs:
         run: |
           $meta = Get-Content "version.json" -Raw | ConvertFrom-Json
           $version = [string]$meta.productVersion
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart("v")
-          if ($version -ne $tagVersion) {
-            throw "Release tag $($env:GITHUB_REF_NAME) does not match version.json productVersion $version."
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tagVersion = $env:GITHUB_REF_NAME.TrimStart("v")
+            if ($version -ne $tagVersion) {
+              throw "Release tag $($env:GITHUB_REF_NAME) does not match version.json productVersion $version."
+            }
+          } elseif ($env:GITHUB_REF_TYPE -eq "branch" -and $version -ne "0.14.8") {
+            throw "Unexpected branch-triggered release version $version."
           }
           if ([int]$meta.schemaVersion -ne 1) { throw "Unsupported version.json schema." }
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid productVersion." }
@@ -144,12 +152,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$env:GITHUB_REF_NAME" `
-            "dist/WiiCompiled-VoiceChat-Installer.exe" `
-            "dist/mkwvc-release.json" `
-            "dist/Licenses.zip" `
-            --repo "$env:GITHUB_REPOSITORY" `
-            --verify-tag `
-            --latest `
-            --generate-notes `
-            --title "MKW VoiceChat $env:MKWVC_RELEASE_VERSION"
+          $releaseTag = "v$env:MKWVC_RELEASE_VERSION"
+          $notes = "This release is for Wiicompiled v$env:MKWVC_WIICOMPILED_VERSION"
+          $releaseArgs = @(
+            "release", "create", $releaseTag,
+            "dist/WiiCompiled-VoiceChat-Installer.exe",
+            "dist/mkwvc-release.json",
+            "dist/Licenses.zip",
+            "--repo", $env:GITHUB_REPOSITORY,
+            "--latest",
+            "--notes", $notes,
+            "--title", "MKW VoiceChat $env:MKWVC_RELEASE_VERSION"
+          )
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $releaseArgs += "--verify-tag"
+          } else {
+            $releaseArgs += @("--target", $env:GITHUB_SHA)
+          }
+          & gh @releaseArgs
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed." }
