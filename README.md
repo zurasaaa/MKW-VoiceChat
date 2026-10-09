@@ -32,7 +32,6 @@ If you don't trust it, don't use it, or read the source and build it yourself (s
 - Microphone loopback test and output test tone
 - Update check in-game, separate updater with SHA-256 verification
 - Global Voice Chat online count, plus an online-user list for users whose Retro Rewind license/profile and friend code can be resolved
-- Open Host option (enabled by default), with indicators showing which players can be joined without being mutual friends
 
 ## Supported versions
 
@@ -40,7 +39,7 @@ Defined in [`version.json`](version.json):
 
 | | |
 |---|---|
-| MKW VoiceChat | 0.14.7 |
+| MKW VoiceChat | 0.14.6 |
 | Protocol | 1 |
 | WiiCompiled base | 0.2.33 |
 
