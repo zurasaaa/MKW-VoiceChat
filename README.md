@@ -39,9 +39,9 @@ Defined in [`version.json`](version.json):
 
 | | |
 |---|---|
-| MKW VoiceChat | 0.14.6 |
+| MKW VoiceChat | 0.14.8 |
 | Protocol | 1 |
-| WiiCompiled base | 0.2.33 |
+| WiiCompiled base | 0.2.34 |
 
 The installer only builds against this exact WiiCompiled version. When a new WiiCompiled version is released, installing is blocked until an MKW VoiceChat update supporting it is available.
 
